@@ -4,18 +4,30 @@
 
 ServcieFramework 定位在 **移动互联网后端** 领域,强调开发的高效性，其开发效率可以比肩Rails.
 
-现在代码中的pom文件用的是公司的maven仓库。更目录下有个open-source.xml，修改成pom.xml即可正常编译。
+ServcieFramework 目前更新频率较高,我现在一直疏于更新中央仓库的版本。所以不再更新maven中央仓库。
+
+建议：
+
+
+1. git clone https://github.com/allwefantasy/csdn_common，
+maven install 到自己本地或者 mvn deploy到自己的私有maven仓库.
+
+2. 如果需要使用MySQL支持，则git clone https://github.com/allwefantasy/active_orm,
+maven install 到自己本地或者 mvn deploy到自己的私有maven仓库.
+
+3. 如果需要使用MongoDB支持，则git clone https://github.com/allwefantasy/mongomongo,
+   maven install 到自己本地或者 mvn deploy到自己的私有maven仓库。
+
+2. git clone ServiceFramework, maven install 到自己本地或者 mvn deploy到自己的私有maven仓库.
+
+经过以上步骤即可使用
+
+### 项目示例
+
+[https://github.com/allwefantasy/godear](https://github.com/allwefantasy/godear) 该项目是一个RSS订阅系统。
+里面展示了ServiceFramework各种典型用法，包括如何构造非JSON Rest API的具有页面的接口。
+
 ### 在Maven中使用该项目
-
-在你的pom.xml 文件中中添加如下引用:
-
-        <dependency>
-            <groupId>net.csdn</groupId>
-            <artifactId>ServiceFramework</artifactId>
-            <version>1.1</version>
-        </dependency>
-
-
 
 接着确保 项目根目录下有config/application.yml,config/logging.yml 两个文件即可。示例可参看该项目中config文件夹。
 
@@ -88,7 +100,41 @@ ServiceFramework 特点：
 
         服务提供者可以针对一个http接口定义出任意个方法，每个方法都之定义一部分参数，这样可以有效方便调用者使用。
 
+7. 如果你不使用Dubbo，你也可以非常容易的调用第三方的标准HTTP接口，达到类似RPC调用的效果。
 
+   * 将第三方HTTP API 做个申明，例如有个搜索接口(Scala代码示例)
+   
+			   trait SearcherClient {
+			  @At(path = Array("/v2/~/~/_search"), types = Array(GET, POST))
+			  @BasicInfo(
+			    desc = "索引服务",
+			    state = State.alpha,
+			    testParams = "",
+			    testResult = "",
+			    author = "WilliamZhu",
+			    email = "allwefantasy@gmail.com"
+			  )
+			  def search(params: Map[String, String], content: String, method: net.csdn.modules.http.RestRequest.Method): java.util.List[HttpTransportService.SResponse]
+			
+			}
+
+    * 接着在需要使用该接口的地方调用如下代码构建SearcherClient对象。记住，这个对象只能构建一次(Scala代码示例)
+    
+				   val _searchClient = AggregateRestClient.buildClient[SearcherClient](hostAndPorts, new SearchEngineStrategy(), httpRequest)
+				   //其中，hostAndPorts 为域名和端口。
+				   //可以是多个。SearchEngineStrategy 是自定义实现如何调用后端服务，
+				   //是轮训的负载均衡还是有特别的逻辑
+ 
+    
+    * 现在可以使用了(Scala代码示例)
+    
+		    val res = _searchClient.search(
+		        url._2.toMap ++ Map("index" -> index, "type" -> ctype),
+		        query,
+		        RestRequest.Method.POST).searchResult
+    
+    使用该种方式调用第三方API会产生Trace日志。
+    
 7. 服务降级限流
 ServiceFramework主要面向后端服务，如果没有自我保护机制，系统很容易过载而不可用。经过一定的容量规划，或者通过对接口调用平均响应耗时的监控，
 我们可以动态调整 ServiceFramework 的QPS限制，从而达到保护系统的目的。这些都可以通过配置以及内置的http接口完成。

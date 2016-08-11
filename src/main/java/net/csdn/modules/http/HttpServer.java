@@ -18,16 +18,14 @@ import net.csdn.modules.http.processor.HttpStartProcessor;
 import net.csdn.modules.http.processor.ProcessInfo;
 import net.csdn.modules.http.processor.impl.DefaultHttpFinishProcessor;
 import net.csdn.modules.http.processor.impl.DefaultHttpStartProcessor;
+import net.csdn.modules.http.processor.impl.TraceHttpFinishProcessor;
+import net.csdn.modules.http.processor.impl.TraceHttpStartProcessor;
 import net.csdn.modules.http.support.HttpHolder;
 import net.csdn.modules.log.SystemLogger;
-import org.eclipse.jetty.server.Handler;
-import org.eclipse.jetty.server.Request;
-import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.SessionManager;
+import org.eclipse.jetty.server.*;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.server.handler.ResourceHandler;
-import org.eclipse.jetty.server.nio.SelectChannelConnector;
 import org.eclipse.jetty.server.session.HashSessionManager;
 import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.util.resource.Resource;
@@ -57,6 +55,7 @@ public class HttpServer {
     private Settings settings;
     private SystemLogger systemLogger;
     private API api;
+    private final int httpPort;
 
     private List<HttpStartProcessor> httpStartProcessorList = new ArrayList();
     private List<HttpFinishProcessor> httpFinishProcessorList = new ArrayList();
@@ -84,23 +83,51 @@ public class HttpServer {
         this.api = api;
         registerHttpStartProcessor(new DefaultHttpStartProcessor());
         registerHttpFinishProcessor(new DefaultHttpFinishProcessor());
+
+        if (settings.getAsBoolean("trace.enable", false)) {
+            registerHttpStartProcessor(new TraceHttpStartProcessor());
+            registerHttpFinishProcessor(new TraceHttpFinishProcessor());
+        }
+
         Environment environment = new Environment(settings);
         disableMysql = settings.getAsBoolean(ServiceFramwork.mode + ".datasources.mysql.disable", false);
-        server = new Server();
-        SelectChannelConnector connector = new SelectChannelConnector();
+
         QueuedThreadPool threadPool = new QueuedThreadPool();
         threadPool.setMinThreads(settings.getAsInt("http.threads.min", 100));
         threadPool.setMaxThreads(settings.getAsInt("http.threads.max", 1000));
-        connector.setThreadPool(threadPool);
-        connector.setPort(settings.getAsInt("http.port", 8080));
+
+        server = new Server(threadPool);
+
+        HttpConfiguration httpConfig = new HttpConfiguration();
+
+        ServerConnector connector = new ServerConnector(server,
+                new HttpConnectionFactory(httpConfig));
+
+
+        httpPort = settings.getAsInt("http.port", generateHttpPort());
+        connector.setPort(httpPort);
+
+        if (!settings.get("http.host", "").isEmpty()) {
+            connector.setHost(settings.get("http.host", ""));
+        }
+
         server.addConnector(connector);
 
         HandlerList handlers = new HandlerList();
+        String staticDir = settings.get("serviceframework.static.loader.classpath.dir", "assets");
         if (settings.getAsBoolean("application.static.enable", false)) {
             ResourceHandler resource_handler = new ResourceHandler();
             resource_handler.setDirectoriesListed(false);
             try {
-                resource_handler.setBaseResource(Resource.newResource(environment.templateDirFile().getPath() + "/assets/"));
+                if (settings.getAsBoolean("serviceframework.static.loader.classpath.enable", false)) {
+                    String webDir = this.getClass().getClassLoader().getResource(staticDir).toExternalForm();
+                    resource_handler.setBaseResource(
+                            Resource.newResource(webDir));
+                } else {
+                    resource_handler.setBaseResource(
+                            Resource.newResource(environment.templateDirFile().getPath() + "/" + staticDir + "/"));
+                }
+
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -126,6 +153,25 @@ public class HttpServer {
 
     public void registerHttpFinishProcessor(HttpFinishProcessor httpFinishProcessor) {
         httpFinishProcessorList.add(httpFinishProcessor);
+    }
+
+
+    private int generateHttpPort() {
+        String clzz = settings.get("http.class.port", "");
+        if (!clzz.isEmpty()) {
+            PortGenerator pg = null;
+            try {
+                pg = (PortGenerator) (Class.forName(clzz).newInstance());
+                return pg.getPort();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        return 8080;
+    }
+
+    public int getHttpPort() {
+        return httpPort;
     }
 
     class DefaultHandler extends AbstractHandler {
@@ -197,6 +243,9 @@ public class HttpServer {
                 defaultErrorAction(channel, e);
             } finally {
                 processInfo.status = channel.status();
+                if (channel.content() != null) {
+                    processInfo.responseLength = channel.content().length();
+                }
                 for (HttpFinishProcessor httpFinishProcessor : httpFinishProcessorList) {
                     httpFinishProcessor.process(settings, httpServletRequest, httpServletResponse, processInfo);
                 }
